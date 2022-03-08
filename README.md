@@ -28,7 +28,7 @@ In this stage, we first write a simple program to realize **lexical analysis** a
 
 We should first edit the `sysy.l` file to deal with comments using regular expressions. Just add:
 
-```c
+```flex
 LA [/]
 LB [*]
 LC [^*/]
