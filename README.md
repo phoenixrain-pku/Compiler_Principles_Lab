@@ -41,5 +41,49 @@ We need to **define** AST of `CompUnit`, `FuncDef `, `FuncType`, `Block`, `Stmt`
 
 Then, to **generate** AST, we should edit the parser rules in  `sysy.y`. We should generate an AST (in my opinion, similar to `new ` in C) and pass it to the caller of the parser. 
 
-Then, to **output** AST, we should add some printer functions. Here we add `dump`, a member function of AST class. Then by calling it in the `main` function, we can see  
+Then, to **output** AST, we should add some printer functions. Here we add `dump`, a member function of AST class. Then by calling it in the `main` function, we can see   whether our program runs well.
 
+The last thing is to **output** IR. It is quite similar to what we do to output AST. Actually, I rewrite the `dump` function, change it to `dumpIR`, and then redirect STDOUT to the output file I want.
+
+An example is shown here:
+
+```bison
+Block
+  : '{' Stmt '}' {
+    auto ast = new BlockAST();
+    ast->Stmt = unique_ptr<BaseAST>($2);
+    $$ = ast;
+  }
+  ;
+```
+
+The above codes are added to `sysy.y`.
+
+```C++
+class BlockAST : public BaseAST {
+ public:
+    std::unique_ptr<BaseAST> Stmt; 
+  void Dump() const override {
+    std::cout << "BlockAST { ";
+    Stmt->Dump();
+    std::cout << " }";
+  }
+  void DumpIR() const override {
+    std::cout << "\%entry:"<<endl;
+    Stmt->DumpIR();
+  }
+};
+```
+
+The above codes are added to `AST.h`.
+
+When writing C/C++ codes, using `#ifdef` is always a good habit. Because I need the program to output in my terminal when debugging, so I use these instructions:
+
+```C++
+// #define _SUB_MODE
+#ifdef  _SUB_MODE
+freopen(output, "w", stdout); 
+#endif
+```
+
+Then I succeed in passing all tests of lv1.
