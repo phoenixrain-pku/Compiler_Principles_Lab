@@ -86,4 +86,23 @@ freopen(output, "w", stdout);
 #endif
 ```
 
-Then I succeed in passing all tests of lv1.
+
+## Lv 2
+
+In this stage, we try on generating RISC-V codes using koopaIR.
+
+The first thing to do is editting codes in lv1, because when generating IR i directly used `std::cout` function. I used a string to store all IR.
+
+Then to generate RISC-V codes, we can use `koopa.h`. It is really a great helper and organize all the partitions well. Then we can just traverse the program by starting with `raw` by using `Visit` functions, and adding some outputting instructions.
+
+A simple example is shown here:
+
+```c++
+void Visit(const koopa_raw_function_t &func) {
+  cout<<"  .globl "<<func->name+1 <<"\n";
+  cout<<func->name+1<<":\n";
+  Visit(func->bbs);
+}
+```
+
+Additionally I add a `KIR.h`, which is only responsible for transferring koopaIR into RISC-V.
