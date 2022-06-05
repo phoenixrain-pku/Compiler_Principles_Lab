@@ -105,4 +105,97 @@ void Visit(const koopa_raw_function_t &func) {
 }
 ```
 
-Additionally I add a `KIR.h`, which is only responsible for transferring koopaIR into RISC-V.
+Additionally I add a `RISCV.h`, which is only responsible for transferring koopaIR into RISC-V.
+
+## Lv 3
+
+In level 3, we should make our compiler able to deal with an expression as the return value.
+
+Because the grammar has changed, so we should first edit `sysy.l` file, adding the operation symbols:
+
+```flex
+RelOP         [<|>][=]?
+EqOP          [=|!][=]
+
+{RelOP}         { yylval.str_val = new string(yytext); return RELOP; }
+{EqOP}          { yylval.str_val = new string(yytext); return EQOP; }
+"&&"            { yylval.str_val = new string(yytext); return ANDOP; }
+"||"            { yylval.str_val = new string(yytext); return OROP; }
+```
+
+And then we should edit `sysy.y` file. Here I add a lot of things, including tokens and non-terminal symbols:
+
+```bison
+%token <str_val> IDENT
+%token <int_val> INT_CONST
+%token <str_val> RELOP EQOP ANDOP OROP
+
+%type <ast_val> FuncDef FuncType Block Stmt Exp PrimaryExp UnaryExp AddExp MulExp
+%type <ast_val> RelExp EqExp LAndExp LOrExp Decl ConstDecl ConstDef ConstInitVal BlockItem ConstExp
+%type <ast_val> VarDecl VarDef InitVal OpenStmt ClosedStmt SimpleStmt
+%type <vec_val> BlockItem_List ConstDef_List VarDef_List
+%type <int_val> Number
+%type <str_val> UnaryOp BType LVal
+```
+
+And the generation rules are also changed. `Stmt` are changed to of the form: `RETURN Exp ';'`.
+
+And the most complicated part is adding the generation rules. I mainly following the doc:
+
+```enbf
+Exp         ::= LOrExp;
+PrimaryExp  ::= '(' Exp ')'| Number | LVal;
+Number      ::= INT_CONST;
+UnaryExp    ::= PrimaryExp | UnaryOp UnaryExp;
+UnaryOp     ::= "+" | "-" | "!";
+MulExp      ::= UnaryExp | MulExp ("*" | "/" | "%") UnaryExp;;
+AddExp      ::= MulExp | AddExp ("+" | "-") MulExp;;
+RelExp      ::= AddExp | RelExp RELOP AddExp;
+EqExp       ::= RelExp | EqExp EQOP RelExp;
+LAndExp     ::= EqExp | LAndExp ANDOP EqExp;
+LOrExp      ::= LAndExp | LOrExp OROP LAndExp;
+```
+
+Here `RELOP`, `EQOP`, `ANDOP` and `OROP` are all defined in the `sysy.l` file.
+
+Additionally, for every rule, I choose to design an AST for each rule on the right side of `::=`, and construct the corresponding AST when the corresponding rule is parsed.
+
+For example, my `LAndExp` looks like:
+
+```bison
+LAndExp
+  : EqExp {
+    auto land_exp = new LAndExpAST();
+    land_exp->op = "";
+    land_exp->eq_exp = unique_ptr<BaseAST>($1);
+    $$ = land_exp;
+  }
+  | LAndExp ANDOP EqExp {
+    auto land_exp = new LAndExpAST();
+    land_exp->land_exp = unique_ptr<BaseAST>($1);
+    land_exp->op = *unique_ptr<string>($2);
+    land_exp->eq_exp = unique_ptr<BaseAST>($3);
+    $$ = land_exp;
+  }
+  ;
+```
+
+Here the symbols ends with `Exp` means that the returned value should be an AST, but the operation can just be a string.
+
+And now is the `AST.h` part.
+
+Here because calculating the value of expressions may be divided to some parts: calculating the left part, and then the right part, and then combine them, the returning value might be `void` or `int` or `string`, so I rewrite the `DumpIR` function outside the definition of class, and take one AST as the argument. Additionally, I gave up using a string to store all IR, but still use the io buffer, adding some instructions:
+
+```c++
+//改变输出流到缓冲区，再存到字符串里
+stringstream ss;
+streambuf* cout_buf = cout.rdbuf();
+cout.rdbuf(ss.rdbuf());
+DumpIR((CompUnitAST*)(ast.get()));
+string ir_str = ss.str();
+const char *ir = ir_str.data();
+cout.rdbuf(cout_buf);
+```
+
+These are copied from CSDN, to make RISCV generation function do further work.
+
