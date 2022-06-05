@@ -114,8 +114,8 @@ In level 3, we should make our compiler able to deal with an expression as the r
 Because the grammar has changed, so we should first edit `sysy.l` file, adding the operation symbols:
 
 ```flex
-RelOP         [<|>][=]?
-EqOP          [=|!][=]
+RelOP         [<=|>=]?
+EqOP          [==|!=]
 
 {RelOP}         { yylval.str_val = new string(yytext); return RELOP; }
 {EqOP}          { yylval.str_val = new string(yytext); return EQOP; }
