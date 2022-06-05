@@ -199,3 +199,155 @@ cout.rdbuf(cout_buf);
 
 These are copied from CSDN, to make RISCV generation function do further work.
 
+For the `unary_exp` case, we just deal with +, - or ! case:
+
+```c++
+switch (unary_exp->op[0])
+{
+    case '+':
+        return result_var;
+        break;
+    //unchanged
+    case '-':
+        cout << "  " << next_var << " = sub 0, " << result_var << "\n";
+        break;
+    //use 0 to sub
+    case '!':
+        cout << "  " << next_var << " = eq " << result_var << ", 0" << "\n";
+        break;
+    //test whether equal
+    default:
+        assert(false);
+}
+symbol_num++;
+return next_var;
+```
+
+We can just maintain a `symbol_num` to record current number of symbols.
+
+And for multiple expression, we should deal with the left part and right part respectively. The instructions are similar to calculating suffix expression:
+
+```c++
+static string DumpIR(const MulExpAST *mul_exp) {
+    string result_var = "";
+    if (mul_exp->op == "")
+        result_var = DumpIR((UnaryExpAST*)(mul_exp->unary_exp.get()));
+    else {
+        string left_result = DumpIR((MulExpAST*)(mul_exp->mul_exp.get()));
+        string right_result = DumpIR((UnaryExpAST*)(mul_exp->unary_exp.get()));
+        result_var = "%" + to_string(symbol_num++);
+        switch (mul_exp->op[0])
+        {
+        case '*':
+            cout << "  " << result_var << " = mul " << left_result << ", " << right_result << "\n";
+            break;
+        case '/':
+            cout << "  " << result_var << " = div " << left_result << ", " << right_result << "\n";
+            break;
+        case '%':
+            cout << "  " << result_var << " = mod " << left_result << ", " << right_result << "\n";
+            break;
+        default:
+            assert(false);
+            break;
+        }
+    }
+
+    return result_var;
+}
+```
+
+As for other expression, we also divide the process into calculating `left_result` and `right_result`.
+
+The codes shown above are to generate AST. As for calculating the number, we use a `DumpEXP` function and do like this:
+
+```c++
+static int DumpEXP(const MulExpAST *mul_exp) {
+    int result = 0;
+    if (mul_exp->op == "")
+        result = DumpEXP((UnaryExpAST*)(mul_exp->unary_exp.get()));
+    else {
+        int left_result = DumpEXP((MulExpAST*)(mul_exp->mul_exp.get()));
+        int right_result = DumpEXP((UnaryExpAST*)(mul_exp->unary_exp.get()));
+        switch (mul_exp->op[0])
+        {
+        case '%':
+            result = left_result % right_result;
+            break;
+        case '*':
+            result = left_result * right_result;
+            break;
+        case '/':
+            result = left_result / right_result;
+            break;
+        default:
+            assert(false);
+            break;
+        }
+    }
+
+    return result;
+}
+```
+
+## lv 4
+
+In this level, we should deal with new symbols. To do so, we should maintain a `symbol_table`, with this declaration:
+
+```c++
+map<string, variant<int, string> > symbol_table;
+```
+
+And when to add a new symbol (variant), the instructions are:
+
+```c++
+static void DumpIR(const VarDefAST *var_def) {
+    string var_name = "@" + var_def->ident;
+    string name = var_name + "_" + to_string(var_names[var_name]++);
+    cout << "  " << name << " = alloc i32" << "\n";
+    symbol_table[var_def->ident] = name;
+    if (var_def->has_init_val) {
+        string value = DumpIR((InitValAST*)(var_def->init_val.get()));
+        cout << "  store " << value << ", " << name << "\n";
+    }
+}
+```
+
+## lv 5
+
+In this level, we should deal with blocks, and each block may introduce some new symbols. To do so, we should maintain a `symbol_tables`, which is composed of many `symbol_table`, with this declaration:
+
+```c++
+static vector<map<string, variant<int, string> > > symbol_tables;
+```
+
+And in `void DumpIR(const BlockAST *block)` function, we should add some instructions:
+
+```c++
+map<string, variant<int, string> > symbol_table;//在本block内建立符号表
+symbol_tables.push_back(symbol_table);
+int size = block->block_item_list.size();
+for (int i = 0; i < size; ++i)
+    DumpIR((BlockItemAST*)(block->block_item_list[i].get()));
+symbol_tables.pop_back();
+```
+
+This means that we should affiliate a symbol table to each block.
+
+## lv 6
+
+To realize short circuit evaluation, we change the codes from
+
+```c
+result = Cal_AST((LAndExpAST*)(land_exp->land_exp.get()))&&Cal_AST((EqExpAST*)(land_exp->eq_exp.get()));
+```
+
+to
+
+```c++
+int left_result = Cal_AST((LAndExpAST*)(land_exp->land_exp.get()));
+if (left_result == 0)
+    return 0;
+result = (Cal_AST((EqExpAST*)(land_exp->eq_exp.get())) != 0);
+```
+
