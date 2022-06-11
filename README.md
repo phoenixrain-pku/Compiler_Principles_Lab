@@ -290,12 +290,110 @@ static int DumpEXP(const MulExpAST *mul_exp) {
 }
 ```
 
+As for the RISC-V part, we first define the register list:
+
+```c++
+string reg_names[16] = {"a0", "a1", "a2", "a3", "a4", "a5", "a6","a7", "t0", "t1", "t2", "t3", "t4", "t5", "t6","x0"};
+```
+
+And their states:
+
+```c++
+int reg_stats[16] = {0};          
+```
+
+And add rules for all binary operations:
+
+```c++
+Reg RISC_Visit(const koopa_raw_binary_t &binary)
+{
+    // returns memory reg_add
+    struct Reg left_val = RISC_Visit(binary.lhs);
+    int left_register = left_val.reg_name;
+    int old_stat = reg_stats[left_register];
+    reg_stats[left_register] = 2;
+    struct Reg right_val = RISC_Visit(binary.rhs);
+    int right_register = right_val.reg_name;
+    reg_stats[left_register] = old_stat;
+    struct Reg result_var = {find_reg(1), -1};
+
+    string left_reg_name = reg_names[left_register];
+    string right_reg_name = reg_names[right_register];
+    string result_reg_name = reg_names[result_var.reg_name];
+
+    switch (binary.op)
+    {
+    case 0: // ne
+        cout << "  "<< "xor " << result_reg_name << ", " << left_reg_name << ", " << right_reg_name << "\n";
+        cout << "  "<< "snez " << result_reg_name << ", " << result_reg_name << "\n";
+        break;
+    case 1: // eq
+        cout << "  "<< "xor " << result_reg_name << ", " << left_reg_name << ", " << right_reg_name << "\n";
+        cout << "  "<< "seqz " << result_reg_name << ", " << result_reg_name << "\n";
+        break;
+    case 2: // gt
+        cout << "  " << "sgt " << result_reg_name << ", " << left_reg_name << ", " << right_reg_name << "\n";
+        break;
+    case 3: // lt
+        cout << "  "<< "slt " << result_reg_name << ", " << left_reg_name << ", " << right_reg_name << "\n";
+        break;
+    case 4: // ge 
+        cout << "  "<< "slt " << result_reg_name << ", " << left_reg_name << ", " << right_reg_name << "\n";
+        cout << "  "<< "xori " << result_reg_name << ", " << result_reg_name << ", 1" << "\n";
+        break;
+    case 5: // le
+        cout << "  "<< "sgt " << result_reg_name << ", " << left_reg_name << ", " << right_reg_name << "\n";
+        cout << "  "<< "xori " << result_reg_name << ", " << result_reg_name << ", 1" << "\n";
+        break;
+    case 6: // add
+        cout << "  "<< "add " << result_reg_name << ", " << left_reg_name << ", " << right_reg_name << "\n";
+        break;
+    case 7: // sub
+        cout << "  "<< "sub " << result_reg_name << ", " << left_reg_name << ", " << right_reg_name << "\n";
+        break;
+    case 8: // mul
+        cout << "  "<< "mul " << result_reg_name << ", " << left_reg_name << ", " << right_reg_name << "\n";
+        break;
+    case 9: // div
+        cout << "  "<< "div " << result_reg_name << ", " << left_reg_name << ", " << right_reg_name << "\n";
+        break;
+    case 10: // mod
+        cout << "  "<< "rem " << result_reg_name << ", " << left_reg_name << ", " << right_reg_name << "\n";
+        break;
+    case 11: // and
+        cout << "  "<< "and " << result_reg_name << ", " << left_reg_name << ", " << right_reg_name << "\n";
+        break;
+    case 12: // or
+        cout << "  "<< "or " << result_reg_name << ", " << left_reg_name << ", " << right_reg_name << "\n";
+        break;
+    default:
+        assert(false);
+    }
+
+    return result_var;
+}
+
+```
+
 ## lv 4
 
 In this level, we should deal with new symbols. To do so, we should maintain a `symbol_table`, with this declaration:
 
 ```c++
 map<string, variant<int, string> > symbol_table;
+```
+
+The `sysy.y` should be editted to support these rules:
+
+```
+Decl          ::= ConstDecl | VarDecl;
+ConstDecl     ::= "const" BType ConstDef {"," ConstDef} ";";
+BType         ::= "int";
+ConstDef      ::= IDENT "=" ConstInitVal;
+ConstInitVal  ::= ConstExp;
+VarDecl       ::= BType VarDef {"," VarDef} ";";
+VarDef        ::= IDENT | IDENT "=" InitVal;
+InitVal       ::= Exp;
 ```
 
 And when to add a new symbol (variant), the instructions are:
@@ -305,13 +403,89 @@ static void DumpIR(const VarDefAST *var_def) {
     string var_name = "@" + var_def->ident;
     string name = var_name + "_" + to_string(var_names[var_name]++);
     cout << "  " << name << " = alloc i32" << "\n";
-    symbol_table[var_def->ident] = name;
+    int i = symbol_tables.size() - 1;
+    symbol_tables[i][var_def->ident] = name;
     if (var_def->has_init_val) {
-        string value = DumpIR((InitValAST*)(var_def->init_val.get()));
+        string value = DumpIR((ExpAST*)((InitValAST*)(var_def->init_val.get()))->exp.get());
         cout << "  store " << value << ", " << name << "\n";
     }
 }
 ```
+
+And this is for new variant declaration:
+
+```c++
+static void DumpIR(const VarDeclAST *var_decl) {
+    assert(var_decl->b_type == "int"); // Only support int type
+    int size = var_decl->var_def_list.size();
+    for (int i = 0; i < size; ++i)
+        DumpIR((VarDefAST*)(var_decl->var_def_list[i].get()));
+}
+```
+
+And as for the RISCV part, an important part is managing frame.
+
+I add the two declaration:
+
+```c++
+int stack_top = 0;
+static map<uintptr_t, int> stack_frame;
+```
+
+And for store operation:
+
+```c++
+void RISC_Visit(const koopa_raw_store_t &store)
+{
+    struct Reg value = RISC_Visit(store.value);
+    koopa_raw_value_t dest = store.dest;
+    assert(value_map.count(dest));
+    if (value_map[dest].reg_add == -1)
+    {
+        value_map[dest].reg_add = stack_top;
+        stack_top += 4;
+    }
+    int reg_name = value.reg_name, reg_add = value_map[dest].reg_add;
+    cout << "  " << "sw " << reg_names[reg_name] << ", " << to_string(reg_add) << "(sp)" << "\n";
+}
+```
+
+And for alloc:
+
+```c++
+case KOOPA_RVT_ALLOC:
+        result_var.reg_add = stack_top;
+        stack_top += 4;
+        value_map[value] = result_var;
+        break;
+```
+
+We also add a stack_frame size calculating function:
+
+```c++
+int cal_size(const koopa_raw_slice_t &slice)
+{
+    int stack_frame_size = 0;
+    for (size_t i = 0; i < slice.len; ++i)
+    {
+        auto ptr = slice.buffer[i];
+        assert(slice.kind == KOOPA_RSIK_VALUE);
+        auto value = reinterpret_cast<koopa_raw_value_t>(ptr);
+        if (value->kind.tag == KOOPA_RVT_ALLOC || value->ty->tag != KOOPA_RTT_UNIT)
+        {
+            stack_frame[reinterpret_cast<uintptr_t>(value)] = stack_frame_size;
+            stack_frame_size++;
+        }
+    }
+    if ((stack_frame_size & 3) > 0)
+    {
+        stack_frame_size = ((stack_frame_size >> 2) + 1) << 2;
+    }
+    return stack_frame_size;
+}
+```
+
+
 
 ## lv 5
 
@@ -332,17 +506,125 @@ for (int i = 0; i < size; ++i)
 symbol_tables.pop_back();
 ```
 
+Because the symbol table should be deleted when escaping the block, so a `pop_back` instruction is needed.
+
 This means that we should affiliate a symbol table to each block.
 
+And the RISCV part doesn't need any change.
+
 ## lv 6
+
+To deal with if and else, I rewrite the rules for `Stmt`:
+
+```bison
+Stmt
+  : OpenStmt {
+    auto stmt = ($1);
+    $$ = stmt;
+  }
+  | ClosedStmt {
+    auto stmt = ($1);
+    $$ = stmt;
+  }
+  ;
+
+ClosedStmt
+  : SimpleStmt {
+    auto stmt = new StmtAST();
+    stmt->type = "simple";
+    stmt->exp_simple = unique_ptr<BaseAST>($1);
+    $$ = stmt;
+  }
+  | IF '(' Exp ')' ClosedStmt ELSE ClosedStmt {
+    auto stmt = new StmtAST();
+    stmt->type = "ifelse";
+    stmt->exp_simple = unique_ptr<BaseAST>($3);
+    stmt->if_stmt = unique_ptr<BaseAST>($5);
+    stmt->else_stmt = unique_ptr<BaseAST>($7);
+    $$ = stmt;
+  }
+  ;
+
+OpenStmt
+  : IF '(' Exp ')' Stmt {
+    auto stmt = new StmtAST();
+    stmt->type = "if";
+    stmt->exp_simple = unique_ptr<BaseAST>($3);
+    stmt->if_stmt = unique_ptr<BaseAST>($5);
+    $$ = stmt;
+  }
+  | IF '(' Exp ')' ClosedStmt ELSE OpenStmt {
+    auto stmt = new StmtAST();
+    stmt->type = "ifelse";
+    stmt->exp_simple = unique_ptr<BaseAST>($3);
+    stmt->if_stmt = unique_ptr<BaseAST>($5);
+    stmt->else_stmt = unique_ptr<BaseAST>($7);
+    $$ = stmt;
+  }
+  ;
+
+SimpleStmt
+  : RETURN Exp ';' {
+    auto stmt = new SimpleStmtAST();
+    stmt->type = "ret";
+    stmt->block_exp = unique_ptr<BaseAST>($2);
+    $$ = stmt;
+  }
+  | RETURN ';' {
+    auto stmt = new SimpleStmtAST();
+    stmt->type = "ret";
+    stmt->block_exp = nullptr;
+    $$ = stmt;
+  }
+  | LVal '=' Exp ';' {
+    auto stmt = new SimpleStmtAST();
+    stmt->type = "lval";
+    stmt->l_val = *unique_ptr<string>($1);
+    stmt->block_exp = unique_ptr<BaseAST>($3);
+    $$ = stmt;
+  }
+  | Block {
+    auto stmt = new SimpleStmtAST();
+    stmt->type = "block";
+    stmt->block_exp = unique_ptr<BaseAST>($1);
+    $$ = stmt;
+  }
+  | Exp ';' {
+    auto stmt = new SimpleStmtAST();
+    stmt->type = "exp";
+    stmt->block_exp = unique_ptr<BaseAST>($1);
+    $$ = stmt;
+  }
+  | ';' {
+    auto stmt = new SimpleStmtAST();
+    stmt->type = "exp";
+    stmt->block_exp = nullptr;
+    $$ = stmt;
+  }
+  ;
+```
+
+Here `OpenStmt` means those Stmt that might not end with a `else`, for example:
+
+```c++
+if (a == 1)
+{
+	if (b == 1)
+		{do...}
+	else if (b == 2)
+		{do...}
+}
+```
+
+We also set a global variant `if_else_num` to identify every if/else block.
+
+And when we stmt is if/else type, we would write  `if_else_num` after if or else.
 
 To realize short circuit evaluation, we change the codes from
 
 ```c
 result = Cal_AST((LAndExpAST*)(land_exp->land_exp.get()))&&Cal_AST((EqExpAST*)(land_exp->eq_exp.get()));
 ```
-
-to
 
 ```c++
 int left_result = Cal_AST((LAndExpAST*)(land_exp->land_exp.get()));
@@ -351,3 +633,23 @@ if (left_result == 0)
 result = (Cal_AST((EqExpAST*)(land_exp->eq_exp.get())) != 0);
 ```
 
+As for the RISCV part, we add two functons:
+
+```c++
+void RISC_Visit(const koopa_raw_branch_t &branch)
+{
+    string true_label = branch.true_bb->name + 1;
+    string false_label = branch.false_bb->name + 1;
+    int cond_reg = RISC_Visit(branch.cond).reg_name;
+    cout << "  " << "bnez " << reg_names[cond_reg] << ", " << true_label << "\n";
+    cout << "  " << "j " << false_label << "\n";
+}
+
+void RISC_Visit(const koopa_raw_jump_t &jump)
+{
+    string target = jump.target->name + 1;
+    cout << "  " << "j " << target << "\n";
+}
+```
+
+Here `int cond_reg = RISC_Visit(branch.cond).reg_name` is an important instruction, because it calculate the condition value, and return a register name, telling us which to compare.
